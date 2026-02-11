@@ -23,6 +23,8 @@ DATA_DIR = getattr(sys, "_MEIPASS", APP_DIR)
 
 POSITION_SCRIPT = os.path.join(DATA_DIR, "Position.py")
 WINTER_SCRIPT = os.path.join(DATA_DIR, "Winter_Event.py")
+POSITION_SCRIPT_NAME = "Position.py"
+WINTER_SCRIPT_NAME = "Winter_Event.py"
 
 CARD_BG = "#090C12"
 CARD_BORDER = "#9AA8BC"
@@ -110,6 +112,18 @@ def _find_image_candidates(base_name):
         os.path.join(APP_DIR, "Resources", f"{base_name}.jpeg"),
     ]
     return names
+
+
+def _resolve_worker_script(script_name):
+    candidates = [
+        os.path.join(APP_DIR, script_name),
+        os.path.join(DATA_DIR, script_name),
+        os.path.join(os.path.dirname(DATA_DIR), script_name),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return candidates[0]
 
 
 def _maybe_run_worker_script():
@@ -1125,15 +1139,46 @@ class LenivayaFignaApp(tk.Tk):
             return [sys.executable, os.path.basename(script_path)]
         return [sys.executable, script_path]
 
+    def _build_worker_env(self, script_path, capture_output=False):
+        env = os.environ.copy()
+        if capture_output:
+            env["PYTHONUNBUFFERED"] = "1"
+
+        candidate_paths = [
+            APP_DIR,
+            DATA_DIR,
+            os.path.dirname(DATA_DIR),
+            os.path.dirname(script_path),
+        ]
+        clean_paths = []
+        seen = set()
+        for path in candidate_paths:
+            if not path:
+                continue
+            normalized = os.path.normcase(os.path.normpath(path))
+            if normalized in seen:
+                continue
+            if os.path.isdir(path):
+                clean_paths.append(path)
+                seen.add(normalized)
+
+        existing_pythonpath = env.get("PYTHONPATH", "").strip()
+        if existing_pythonpath:
+            clean_paths.append(existing_pythonpath)
+        env["PYTHONPATH"] = os.pathsep.join(clean_paths)
+        return env
+
     def run_position(self):
-        if not os.path.exists(POSITION_SCRIPT):
+        script_path = _resolve_worker_script(POSITION_SCRIPT_NAME)
+        if not os.path.exists(script_path):
             self._set_status("Position.py not found.")
             self._append_terminal_line("Position.py not found.")
             return
         try:
             subprocess.Popen(
-                self._build_launch_command(POSITION_SCRIPT),
+                self._build_launch_command(script_path),
                 cwd=APP_DIR,
+                env=self._build_worker_env(script_path, capture_output=False),
                 creationflags=self.create_no_window,
             )
             self._append_terminal_line("Waiting for position. Press Start when ready.")
@@ -1153,15 +1198,15 @@ class LenivayaFignaApp(tk.Tk):
             self._set_status("Winter_Event.py is already running.")
             self._append_terminal_line("Macro is already running.")
             return
-        if not os.path.exists(WINTER_SCRIPT):
+        script_path = _resolve_worker_script(WINTER_SCRIPT_NAME)
+        if not os.path.exists(script_path):
             self._set_status("Winter_Event.py not found.")
             self._append_terminal_line("Winter_Event.py not found.")
             return
         try:
-            env = os.environ.copy()
-            env["PYTHONUNBUFFERED"] = "1"
+            env = self._build_worker_env(script_path, capture_output=True)
             self.winter_proc = subprocess.Popen(
-                self._build_launch_command(WINTER_SCRIPT, capture_output=True),
+                self._build_launch_command(script_path, capture_output=True),
                 cwd=APP_DIR,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
